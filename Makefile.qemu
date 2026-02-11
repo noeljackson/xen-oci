@@ -42,11 +42,12 @@ xen-configure: $(XEN_SRC)
 	cd $(XEN_SRC) && ./configure $(XEN_CONFIGURE_OPTS)
 
 TOOL_CFLAGS := -O2 -Wall -static -DUSE_PTHREAD
-TOOL_ARGS ?= all V=1 nosharedlibs=y
+TOOL_ARGS := all V=1 nosharedlibs=y
 
 XEN_TOOLS := call ctrl devicemodel foreignmemory gnttab guest evtchn \
 		 toolcore toollog store
 
+# order is important
 TOOL_SUBDIRS := tools/include $(addprefix tools/libs/,$(XEN_TOOLS))
 
 tools/%: xen-configure
