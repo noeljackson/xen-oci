@@ -3,6 +3,7 @@ all:	xen-tools libuc build
 
 include common.mk
 
+# meson.build in qemu relies on this
 export PKG_CONFIG_PATH += $(XEN_SRC)/tools/pkg-config
 
 QEMU_SRC := $(abspath qemu-xen)
@@ -37,9 +38,13 @@ libuc: $(LIBUC_SRC)/libucontext.a
 XEN_CONFIGURE_OPTS ?= --prefix=$(INSTALL_PREFIX) \
 		  --disable-xen --enable-tools --disable-stubdom --disable-docs
 
-.PHONY: xen-configure
-xen-configure: $(XEN_SRC)
+XEN_CONFIGURE := $(XEN_SRC)/config.status
+
+$(XEN_CONFIGURE): | $(XEN_SRC)
 	cd $(XEN_SRC) && ./configure $(XEN_CONFIGURE_OPTS)
+
+.PHONY: xen-configure
+xen-configure: $(XEN_CONFIGURE)
 
 TOOL_CFLAGS := -O2 -Wall -static -DUSE_PTHREAD
 TOOL_ARGS := all V=1 nosharedlibs=y
@@ -50,7 +55,7 @@ XEN_TOOLS := call ctrl devicemodel foreignmemory gnttab guest evtchn \
 # order is important
 TOOL_SUBDIRS := tools/include $(addprefix tools/libs/,$(XEN_TOOLS))
 
-tools/%: xen-configure
+tools/%: $(XEN_CONFIGURE)
 	$(MAKE) EXTRA_CFLAGS_XEN_TOOLS="$(TOOL_CFLAGS)" -j -C $(XEN_SRC)/$@ $(TOOL_ARGS)
 
 .PHONY: xen-tools
@@ -72,8 +77,8 @@ $(QEMU_PATCHED): | $(QEMU_SRC)
 	cd $(QEMU_SRC) && sh ../apply-patches.sh ../patches $(XEN_VERSION) qemu
 	touch $@
 
-.PHONY: qemu-patches
-qemu-patches: $(QEMU_PATCHED)
+.PHONY: qemu-patch
+qemu-patch: $(QEMU_PATCHED)
 
 QEMU_CFLAGS ?= -O2 -Wall -Wno-error \
 			   $(addprefix -I$(XEN_SRC)/tools/,include libxc xenstore)
@@ -98,8 +103,12 @@ configure: $(QEMU_CONFIGURE)
 
 .PHONY: build
 build: libuc xen-tools $(QEMU_CONFIGURE)
-	cd $(QEMU_SRC) && make -j
+	$(MAKE) -C $(QEMU_SRC) -j $(NPROC)
 
 .PHONY: install
 install: build $(INSTALL_PREFIX)
-	cd $(QEMU_SRC) && make install
+	$(MAKE) -C $(QEMU_SRC) install
+
+.PHONY: clean
+clean:
+	

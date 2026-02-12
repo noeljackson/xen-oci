@@ -17,17 +17,24 @@ $(XEN_CONFIG): | $(XEN_SRC)
 	cp configs/xen-x86_64.config $@
 	$(MAKE) -C $(XEN_SRC)/xen olddefconfig
 
-.PHONY: configure
-configure: $(XEN_CONFIG)
+$(XEN_CONFIGURE): $(XEN_CONFIG)
 	cd $(XEN_SRC) && ./configure $(CONFIGURE_OPTS)
 
 menu: | $(XEN_SRC)
 	$(MAKE) -C $(XEN_SRC)/xen menuconfig
 
 .PHONY: xen
-xen: configure
-	$(MAKE) -C $(XEN_SRC) -j dist-xen
+xen: $(XEN_CONFIGURE)
+	$(MAKE) -C $(XEN_SRC) -j $(NPROC) dist-xen
 
 .PHONY: install
 install: $(XEN_EFI) $(XEN_GZ)
 	sudo $(MAKE) -C $(XEN_SRC) install-xen
+
+.PHONY:	uninstall
+uninstall:
+	sudo $(MAKE) -C ($XEN_SRC) uninstall-xen
+
+.PHONY: clean
+clean:
+	$(MAKE) -C $(XEN_SRC) -j $(NPROC) clean

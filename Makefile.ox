@@ -3,21 +3,28 @@ all:	build
 
 include common.mk
 
-QEMU_SRC := $(abspath qemu-xen)
-QEMU_URL ?= https://github.com/edera-dev/qemu.git
-QEMU_BRANCH ?= edera
-
 INSTALL_PREFIX ?= /usr
 
-# Xen soures configuration
+PATCHED := $(XEN_SRC)/.patched
+
+$(PATCHED): | $(XEN_SRC)
+	cd $(XEN_SRC) && sh ../apply-patches.sh ../patches $(XEN_VERSION) oxenstored
+	touch $@
+
+.PHONY: patch
+patch: $(PATCHED)
 
 # reconfigure xen source to build tools differently from xen itself
 XEN_CONFIGURE_OPTS ?= --prefix=$(INSTALL_PREFIX) \
 		  --disable-xen --enable-tools --disable-stubdom --disable-docs
 
-.PHONY: xen-configure
-xen-configure: $(XEN_SRC)
+XEN_CONFIGURE := $(XEN_SRC)/config.status
+
+$(XEN_CONFIGURE): $(XEN_SRC)
 	cd $(XEN_SRC) && ./configure $(XEN_CONFIGURE_OPTS)
+
+.PHONY: xen-configure
+xen-configure: $(XEN_CONFIGURE)
 
 TOOL_CFLAGS := -O2 -Wall -static -fPIC
 TOOL_LDFLAGS := -static
@@ -29,16 +36,27 @@ XEN_TOOLS := call ctrl devicemodel foreignmemory gnttab guest evtchn \
 # order is important
 TOOL_SUBDIRS := tools/include $(addprefix tools/libs/,$(XEN_TOOLS)) tools/ocaml
 
-tools/%: xen-configure
+tools/%: $(XEN_CONFIGURE)
 	$(MAKE) EXTRA_CFLAGS_XEN_TOOLS="$(TOOL_CFLAGS)" -j -C $(XEN_SRC)/$@ $(TOOL_ARGS)
 
-.PHONY: xen-tools
-xen-tools: $(TOOL_SUBDIRS)
-	strip $(XEN_SRC)/tools/ocaml/xenstored/oxenstored
-
+# oxenstored is simply built as one of the tools
 .PHONY: build
-build: xen-tools
+build: $(TOOL_SUBDIRS)
+	strip $(XEN_SRC)/tools/ocaml/xenstored/oxenstored
 
 .PHONY: install
 install: build
-	cd $(QEMU_SRC) && make install
+	sudo install -m 0644 oxenstored.service /usr/lib/systemd/system/
+	cd /usr/lib/systemd/system && sudo ln -s oxenstored.service xenstored.service
+	sudo install -m 0755 $(XEN_SRC)/tools/ocaml/xenstored /usr/sbin/
+	sudo install -m 0644 $(XEN_SRC)
+
+.PHONY: uninstall
+uninstall:
+	sudo rm -f /usr/lib/systemd/system/oxenstored.service
+	sudo rm -f /usr/lib/systemd/system/xenstored.service
+
+.PHONY: clean
+clean:
+	make -C $(XEN_SRC) clean -j $(NPROC)
+	rm -f $(XEN_CONFIGURE)
