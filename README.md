@@ -1,6 +1,6 @@
 # xen-oci
 
-This repo consists mostly of OCI image spec files that are used to build Edera's fork of Xen: https://github.com/edera-dev/xen
+This repo consists mostly of OCI image spec files that are used to build our fork of Xen: https://github.com/noeljackson/xen
 
 All the Xen components come from that fork tree, and we build, package and publish them using Github Actions as 3 distinct OCI artifacts:
 
