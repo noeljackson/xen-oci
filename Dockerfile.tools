@@ -1,0 +1,82 @@
+FROM debian:bookworm AS build
+ARG XEN_VERSION=4.21
+ARG XEN_BRANCH=master
+ARG XEN_REPO=https://github.com/noeljackson/xen.git
+WORKDIR /usr/src
+
+# Build dependencies for C toolstack (xl, xenstored, xenconsoled, libxl)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git flex bison python3 python3-dev \
+    libssl-dev libncurses-dev libsystemd-dev libyajl-dev \
+    libfdt-dev uuid-dev iasl libaio-dev libglib2.0-dev \
+    libpixman-1-dev pkg-config wget ca-certificates
+
+# Clone Xen sources from our fork
+ENV XEN_VERSION=${XEN_VERSION}
+ENV XEN_BRANCH=${XEN_BRANCH}
+ENV XEN_REPO=${XEN_REPO}
+RUN git clone -b "$XEN_BRANCH" "$XEN_REPO"
+
+WORKDIR /usr/src/xen
+
+# Remove -Werror to avoid build failures from warnings
+RUN find . \( -name '*.mk' -o -name 'Make*' \) -exec sed -i -e 's/-Werror//g' {} +
+
+# Configure: tools only (no hypervisor, no stubdom, no docs)
+RUN ./configure --prefix=/usr --sbindir=/usr/sbin --libdir=/usr/lib \
+    --disable-xen --enable-tools --disable-stubdom --disable-docs \
+    --disable-qemu-traditional --with-system-qemu=/bin/false
+
+# Build tools component-by-component to skip firmware/xen-shim
+# (firmware tries to build xen-shim which requires full hypervisor source)
+ENV CFLAGS="-Wno-error"
+
+# 1. Build all tool libraries (libxl, libxenstore, libxencall, etc.)
+RUN make -j$(nproc) -C tools/include
+RUN make -j$(nproc) -C tools/libs
+
+# 2. Build xl (the main management CLI)
+RUN make -j$(nproc) -C tools/xl
+
+# 3. Build C xenstored
+RUN make -j$(nproc) -C tools/xenstored
+
+# 4. Build xenconsoled
+RUN make -j$(nproc) -C tools/console
+
+# 5. Build xentrace
+RUN make -j$(nproc) -C tools/xentrace
+
+# 6. Build misc tools (xenperf, xen-hptool, etc.)
+RUN make -j$(nproc) -C tools/misc
+
+# 7. Build xs-clients (xenstore-ls, xenstore-read, xenstore-write, etc.)
+RUN make -j$(nproc) -C tools/xs-clients
+
+# 8. Build hotplug scripts
+RUN make -j$(nproc) -C tools/hotplug
+
+# Install each component to /output
+RUN mkdir -p /output
+RUN DESTDIR=/output make -C tools/libs install
+RUN DESTDIR=/output make -C tools/xl install
+RUN DESTDIR=/output make -C tools/xenstored install
+RUN DESTDIR=/output make -C tools/console install
+RUN DESTDIR=/output make -C tools/xentrace install
+RUN DESTDIR=/output make -C tools/misc install
+RUN DESTDIR=/output make -C tools/xs-clients install
+RUN DESTDIR=/output make -C tools/hotplug install
+
+# Strip binaries
+RUN find /output -type f -executable -exec sh -c 'file "$1" | grep -q ELF && strip "$1"' _ {} \; 2>/dev/null || true
+
+# Ensure all expected dirs exist (some components may not install to all paths)
+RUN mkdir -p /output/usr/sbin /output/usr/bin /output/usr/lib /output/etc /output/usr/share
+
+# Copy final tools into a scratch image
+FROM scratch AS final
+COPY --from=build /output/usr/sbin/ /usr/sbin/
+COPY --from=build /output/usr/bin/ /usr/bin/
+COPY --from=build /output/usr/lib/ /usr/lib/
+COPY --from=build /output/etc/ /etc/
+COPY --from=build /output/usr/share/ /usr/share/
